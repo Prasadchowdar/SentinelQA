@@ -1,0 +1,138 @@
+{
+  "design_system": {
+    "identity": {
+      "name": "SentinelQA Enterprise",
+      "archetype": "The Dark Control Room",
+      "core_metaphor": "Autonomous Digital Immune System",
+      "emotional_tone": "Precision, Autonomy, Intelligence, Speed",
+      "visual_style": "Cyber-Swiss / High-Fidelity Dark Mode"
+    },
+    "typography": {
+      "font_family": {
+        "headings": "Chivo, sans-serif",
+        "body": "Manrope, sans-serif",
+        "code": "JetBrains Mono, monospace"
+      },
+      "weights": {
+        "headings": "700 (Bold) or 900 (Black)",
+        "body": "400 (Regular) and 500 (Medium)",
+        "code": "400 (Regular)"
+      },
+      "scale": {
+        "h1": "text-5xl md:text-7xl tracking-tight leading-none",
+        "h2": "text-4xl md:text-5xl tracking-tight",
+        "h3": "text-2xl md:text-3xl tracking-normal",
+        "body_lg": "text-lg leading-relaxed",
+        "body_base": "text-base leading-relaxed",
+        "caption": "text-sm text-muted-foreground uppercase tracking-widest"
+      },
+      "import_url": "https://fonts.googleapis.com/css2?family=Chivo:wght@400;700;900&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;700&display=swap"
+    },
+    "colors": {
+      "palette": {
+        "background": "#050505",
+        "surface": "#0A0A0A",
+        "surface_highlight": "#171717",
+        "border": "#262626",
+        "primary": "#3B82F6",
+        "primary_hover": "#60A5FA",
+        "secondary": "#27272A",
+        "accent_success": "#10B981",
+        "accent_error": "#EF4444",
+        "accent_warning": "#F59E0B",
+        "text_primary": "#FAFAFA",
+        "text_secondary": "#A1A1AA",
+        "text_tertiary": "#52525B"
+      },
+      "usage_rules": {
+        "gradients": "NO full-screen gradients. Use subtle radial gradients for 'glow' effects behind cards.",
+        "borders": "Use 1px borders with 10-20% opacity for structure. Active elements get 100% opacity primary color border.",
+        "glassmorphism": "Use backdrop-blur-xl with bg-black/60 for sticky headers and modals."
+      }
+    },
+    "visual_enhancers": {
+      "textures": "Add a subtle noise texture (opacity 0.03) over the entire app background to reduce digital flatness.",
+      "shadows": {
+        "card": "0 0 0 1px rgba(255,255,255,0.05), 0 4px 12px rgba(0,0,0,0.5)",
+        "glow": "0 0 20px rgba(59, 130, 246, 0.3)"
+      },
+      "borders": {
+        "tracing_beam": "Animate a gradient border around active test cards.",
+        "tech_lines": "Use 1px dashed lines (border-dashed) to connect related data points."
+      }
+    },
+    "grids_and_layout": {
+      "dashboard": {
+        "type": "Bento Grid",
+        "classes": "grid grid-cols-1 md:grid-cols-4 gap-4 p-4 md:p-6",
+        "rules": "Dense packing. No jagged bottoms. Use col-span-2 for main charts."
+      },
+      "marketing": {
+        "type": "Tetris Grid",
+        "classes": "grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12 p-6 md:p-12",
+        "rules": "Asymmetry is key. Leave empty cells for breathing room."
+      }
+    },
+    "components": {
+      "buttons": {
+        "primary": "bg-primary text-white hover:bg-primary/90 rounded-md px-6 py-3 font-medium transition-all shadow-[0_0_15px_rgba(59,130,246,0.4)] hover:shadow-[0_0_25px_rgba(59,130,246,0.6)]",
+        "secondary": "bg-secondary text-white hover:bg-secondary/80 rounded-md px-6 py-3 font-medium border border-white/10",
+        "ghost": "hover:bg-white/5 text-gray-400 hover:text-white"
+      },
+      "cards": {
+        "base": "bg-surface border border-border rounded-xl p-6 relative overflow-hidden group",
+        "hover_effect": "hover:border-primary/50 transition-colors duration-300"
+      },
+      "inputs": {
+        "style": "bg-black/50 border-white/10 focus:border-primary focus:ring-1 focus:ring-primary rounded-md h-11"
+      },
+      "status_badges": {
+        "success": "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-2 py-0.5 rounded text-xs font-mono uppercase",
+        "failure": "bg-red-500/10 text-red-500 border border-red-500/20 px-2 py-0.5 rounded text-xs font-mono uppercase",
+        "running": "bg-amber-500/10 text-amber-500 border border-amber-500/20 px-2 py-0.5 rounded text-xs font-mono uppercase animate-pulse"
+      }
+    },
+    "motion": {
+      "library": "framer-motion",
+      "transitions": {
+        "page": "initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.3 }}",
+        "hover": "transition-all duration-200 ease-out",
+        "list_stagger": "staggerChildren: 0.05"
+      },
+      "micro_interactions": "Buttons scale down slightly (0.98) on click. Links have a sliding underline effect."
+    },
+    "media": {
+      "image_urls": {
+        "hero_background": "https://images.unsplash.com/photo-1569660424259-87e64a80f6fc?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "team_section": "https://images.pexels.com/photos/1181273/pexels-photo-1181273.jpeg",
+        "abstract_network": "https://images.pexels.com/photos/17485658/pexels-photo-17485658.png",
+        "server_room": "https://images.unsplash.com/photo-1611494215598-da6d9486636b?crop=entropy&cs=srgb&fm=jpg&q=85"
+      },
+      "icons": "lucide-react (default). Use 'Activity', 'Shield', 'Zap', 'Terminal', 'GitBranch' heavily."
+    },
+    "accessibility": {
+      "contrast": "Ensure text-gray-400 is only used on dark backgrounds if it meets 4.5:1. Use text-gray-300 for better safety.",
+      "focus_states": "Visible ring-2 ring-primary ring-offset-2 ring-offset-black on all interactive elements.",
+      "reduced_motion": "Respect prefers-reduced-motion media query."
+    },
+    "universal_guidelines": [
+      "Do not use gradients for text.",
+      "Do not center align the app container.",
+      "Use 'sonner' for toasts.",
+      "All interactive elements must have data-testid.",
+      "Use named exports for components, default exports for pages.",
+      "Never use 'Inter' for headings.",
+      "Dark mode is the default and primary experience."
+    ]
+  },
+  "instructions_to_main_agent": {
+    "setup": "Install 'framer-motion' and 'sonner'. Add the Google Fonts import to index.css.",
+    "layout": "Implement the 'Control Room' layout for the dashboard immediately. Do not use a sidebar that looks like a generic admin template; make it look like a tool palette.",
+    "components": "Customize Shadcn components to match the 'Dark Control Room' aesthetic (remove rounded-lg, go for rounded-md or rounded-sm for a sharper tech feel).",
+    "pages": {
+      "landing": "Use the 'Tetris Grid' layout. Hero section should use the 'abstract_network' image with a heavy overlay.",
+      "dashboard": "Use the 'Bento Grid'. Status cards must be the focal point.",
+      "project_detail": "Video player must look like a CCTV feed or debug terminal."
+    }
+  }
+}
