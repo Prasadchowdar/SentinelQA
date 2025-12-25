@@ -69,9 +69,10 @@ export const AuthProvider = ({ children }) => {
   };
 
   const loginWithGoogle = () => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + '/dashboard';
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+    // TODO: Configure your own OAuth provider
+    // The emergent.sh OAuth has been removed - you need to set up your own Google OAuth
+    alert('Google OAuth not configured. Please use email/password login or configure your own OAuth provider.');
+    // Example: window.location.href = `https://your-oauth-provider.com/?redirect=${encodeURIComponent(redirectUrl)}`;
   };
 
   const processOAuthCallback = async (sessionId) => {

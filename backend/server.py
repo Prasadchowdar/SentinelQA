@@ -307,7 +307,7 @@ async def create_session_from_oauth(request: Request, response: Response):
     
     async with httpx.AsyncClient() as client:
         resp = await client.get(
-            "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+            "http://localhost:8000/api/auth/oauth/session-data",
             headers={"X-Session-ID": session_id}
         )
         if resp.status_code != 200:
@@ -674,7 +674,7 @@ async def get_webhook_url(org_id: str, project_id: str, user: dict = Depends(get
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     
-    backend_url = os.environ.get('BACKEND_URL', 'https://testguard-5.preview.emergentagent.com')
+    backend_url = os.environ.get('BACKEND_URL', 'http://localhost:8000')
     webhook_url = f"{backend_url}/api/webhooks/github/{project.get('webhook_token', '')}"
     
     return {"webhook_url": webhook_url, "webhook_token": project.get("webhook_token", "")}
