@@ -27,6 +27,61 @@ SentinelQA uses GPT-4 Vision to automatically test your web applications by anal
 - 🔄 **URL Change Detection** - Knows when page navigated
 - 🛑 **Early Completion** - Stops when task is done (not after 10 steps)
 
+### 🔍 AI-Powered Verification System (NEW!)
+
+SentinelQA doesn't just navigate - it **verifies correctness** with AI-powered dynamic assertions.
+
+#### Verification Types
+| Type | What It Checks | Example |
+|------|---------------|---------|
+| `text_contains` | Element text contains value | "iPhone" in product title |
+| `text_equals` | Exact text match | Price = "$999.00" |
+| `exists` | Element exists in DOM | Add to cart button exists |
+| `visible` | Element is visible on page | Error message is visible |
+| `not_visible` | Element NOT visible | Spinner gone, modal closed |
+| `enabled` | Button/input is clickable | Submit button is enabled |
+| `url_contains` | URL contains pattern | "/checkout" in URL |
+
+#### Confidence Levels
+Every verification includes a confidence rating:
+- **High** - Direct selector match (most reliable)
+- **Medium** - Fallback to text or aria-label
+- **Low** - Element not found or unreliable selector
+
+#### Example Output
+```
+✓ Navigated to https://www.apple.com/
+✓ Page title: Apple
+
+Step 1: Click search icon
+✓ Executed: click [aria-label*='search' i]
+
+Step 2: Type search term
+✓ Executed: type "iPhone 16"
+✓ Executed: press Enter
+
+Step 3: Verify search results
+  ✓ VERIFY [high]: Search results page loaded
+    Result: URL contains '/search/'
+  ✓ VERIFY [high]: Product results visible
+    Result: Element is visible
+
+📊 Verification Results: 2/2 passed ✓
+✓ Task completed successfully
+```
+
+#### Failed Verification Example
+```
+  ✗ VERIFY FAILED [medium]: Price element visible
+    Expected: Price visible
+    Actual: not visible
+    Reason: Element exists but not visible
+    Selector: .price-total
+
+📊 Verification Results: 1/2 passed (1 failed)
+✗ Task FAILED - Verification failed
+```
+
 ---
 
 ## 🏗️ Architecture
