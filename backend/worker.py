@@ -41,7 +41,25 @@ def _run_playwright_in_thread(coro_func, *args, **kwargs):
         try:
             return loop.run_until_complete(coro_func(*args, **kwargs))
         finally:
-            loop.close()
+            # Properly cleanup pending tasks before closing the loop
+            try:
+                # Cancel all pending tasks
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                
+                # Wait for tasks to be cancelled (with timeout)
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                
+                # Shutdown async generators
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                
+                # Close the loop
+                loop.close()
+            except Exception:
+                # Suppress cleanup errors - they're harmless
+                pass
     
     # Run in a thread pool to not block the main event loop
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
