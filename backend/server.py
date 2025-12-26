@@ -131,7 +131,7 @@ class TestRun(BaseModel):
     model_config = ConfigDict(extra="ignore")
     run_id: str
     project_id: str
-    status: str  # running, pass, fail
+    status: str  # running, pass, fail, inconclusive
     duration_ms: Optional[int] = None
     ai_summary: Optional[str] = None
     bug_summary: Optional[str] = None
@@ -139,6 +139,10 @@ class TestRun(BaseModel):
     video_path: Optional[str] = None  # Full path to the video file
     started_at: datetime
     completed_at: Optional[datetime] = None
+    # TIER 1 additions
+    verifications: Optional[Dict[str, int]] = None  # {total, passed, failed}
+    failure_info: Optional[Dict[str, Any]] = None   # {step, timestamp, action, selector, reason, screenshot_b64, dom_snippet}
+    plain_english_explanation: Optional[str] = None
 
 class Integration(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -704,6 +708,151 @@ async def get_test_runs(org_id: str, project_id: str, user: dict = Depends(get_c
 
 
 # =====================================================
+# GitHub Integration Helpers
+# =====================================================
+
+async def post_github_status(project_data: dict, commit_sha: str, status: str, description: str):
+    """Post commit status to GitHub (shows as check mark/X on commits)"""
+    github_token = project_data.get("github_token")
+    github_repo = project_data.get("github_repo")
+    
+    if not github_token or not github_repo:
+        logging.warning("GitHub integration not configured for this project")
+        return
+    
+    # Map our status to GitHub status
+    gh_status_map = {
+        "pass": "success",
+        "fail": "failure",
+        "inconclusive": "pending",
+        "running": "pending"
+    }
+    gh_status = gh_status_map.get(status, "error")
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.github.com/repos/{github_repo}/statuses/{commit_sha}",
+                headers={
+                    "Authorization": f"token {github_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                },
+                json={
+                    "state": gh_status,
+                    "description": description[:140],
+                    "context": "SentinelQA",
+                    "target_url": os.environ.get("FRONTEND_URL", "http://localhost:3000")
+                }
+            )
+            if response.status_code == 201:
+                logging.info(f"Posted GitHub status: {gh_status} for {commit_sha}")
+            else:
+                logging.error(f"Failed to post GitHub status: {response.text}")
+    except Exception as e:
+        logging.error(f"Error posting GitHub status: {e}")
+
+
+async def post_github_pr_comment(project_data: dict, pr_number: int, result: dict, video_url: str = None):
+    """
+    TIER 1: Post formatted comment to GitHub PR with test results
+    Includes: PASS/FAIL status, summary, verification results, video link
+    """
+    github_token = project_data.get("github_token")
+    github_repo = project_data.get("github_repo")
+    
+    if not github_token or not github_repo or not pr_number:
+        logging.warning("Cannot post PR comment: missing GitHub config or PR number")
+        return
+    
+    # Build the comment
+    status = result.get("status", "unknown")
+    status_emoji = "✅" if status == "pass" else ("⚠️" if status == "inconclusive" else "❌")
+    
+    verifications = result.get("verifications", {})
+    v_total = verifications.get("total", 0)
+    v_passed = verifications.get("passed", 0)
+    
+    comment_parts = [
+        f"## {status_emoji} SentinelQA Test Result: **{status.upper()}**",
+        "",
+        "| Metric | Value |",
+        "|--------|-------|",
+        f"| Status | {status.upper()} |",
+        f"| Duration | {result.get('duration_ms', 0)}ms |",
+    ]
+    
+    if v_total > 0:
+        comment_parts.append(f"| Verifications | {v_passed}/{v_total} passed |")
+    
+    comment_parts.append("")
+    
+    # Add failure explanation if failed
+    if status == "fail":
+        plain_explanation = result.get("plain_english_explanation")
+        if plain_explanation:
+            comment_parts.extend([
+                "### ❌ Failure Reason",
+                f"> {plain_explanation}",
+                ""
+            ])
+        
+        failure_info = result.get("failure_info")
+        if failure_info:
+            comment_parts.extend([
+                "### 📍 Failure Details",
+                f"- **Step**: {failure_info.get('step', 'N/A')}",
+                f"- **Timestamp**: {failure_info.get('timestamp', 'N/A')}",
+                f"- **Action**: {failure_info.get('action', 'N/A')}",
+                f"- **Selector**: `{failure_info.get('selector', 'N/A')}`",
+                ""
+            ])
+    
+    # Add video link
+    if video_url:
+        comment_parts.extend([
+            "### 📹 Video Recording",
+            f"[Watch Test Video]({video_url})",
+            ""
+        ])
+    
+    # Add summary (truncated)
+    summary = result.get("ai_summary", "")[:500]
+    if summary:
+        comment_parts.extend([
+            "<details>",
+            "<summary>View Execution Log</summary>",
+            "",
+            "```",
+            summary,
+            "```",
+            "</details>",
+            ""
+        ])
+    
+    comment_parts.append("---")
+    comment_parts.append("*Tested by [SentinelQA](https://github.com/Prasadchowdar/SentinelQA)*")
+    
+    comment_body = "\n".join(comment_parts)
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://api.github.com/repos/{github_repo}/issues/{pr_number}/comments",
+                headers={
+                    "Authorization": f"token {github_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                },
+                json={"body": comment_body}
+            )
+            if response.status_code == 201:
+                logging.info(f"Posted PR comment to PR #{pr_number}")
+            else:
+                logging.error(f"Failed to post PR comment: {response.text}")
+    except Exception as e:
+        logging.error(f"Error posting PR comment: {e}")
+
+
+# =====================================================
 # Background Task Helper for Non-Blocking Test Execution
 # =====================================================
 
@@ -741,7 +890,14 @@ async def execute_test_background(run_id: str, project_id: str, url: str, instru
                 "bug_summary": result["bug_summary"],
                 "video_url": final_video_url,  # <--- Saving to video_url for Frontend
                 "video_path": result.get("video_path"),
-                "completed_at": datetime.now(timezone.utc).isoformat()
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                # TIER 1 additions
+                "verifications": result.get("verifications"),
+                "failure_info": {
+                    k: v for k, v in (result.get("failure_info") or {}).items() 
+                    if k != "screenshot_b64"  # Don't store base64 in DB (too large)
+                } if result.get("failure_info") else None,
+                "plain_english_explanation": result.get("plain_english_explanation")
             }}
         )
         

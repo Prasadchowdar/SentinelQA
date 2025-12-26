@@ -701,6 +701,95 @@ class AuthenticationAwareWorker:
             logger.error(f"VERIFY ERROR: {result['reason']}")
             return result
 
+    async def capture_failure_evidence(self, page: Page, step_count: int, action_data: dict, start_time: datetime) -> dict:
+        """
+        TIER 1: Capture comprehensive failure evidence (screenshot, DOM, context)
+        """
+        evidence = {
+            "step": step_count,
+            "timestamp": f"{(datetime.now() - start_time).total_seconds():.2f}s",
+            "action": action_data.get("action", "unknown"),
+            "selector": action_data.get("selector", "N/A"),
+            "screenshot_b64": None,
+            "dom_snippet": None
+        }
+        
+        try:
+            # Capture failure screenshot
+            screenshot_bytes = await page.screenshot(type="png", full_page=False)
+            evidence["screenshot_b64"] = base64.b64encode(screenshot_bytes).decode('utf-8')
+            logger.info(f"Captured failure screenshot at step {step_count}")
+            
+            # Capture relevant DOM snippet around the selector
+            selector = action_data.get("selector", "")
+            if selector:
+                try:
+                    dom_snippet = await page.evaluate(f"""() => {{
+                        try {{
+                            const el = document.querySelector('{selector.replace("'", "\\'")}');
+                            if (el) {{
+                                return el.outerHTML.substring(0, 500);
+                            }}
+                            // Try to find parent container
+                            const body = document.body.innerHTML;
+                            return body.substring(0, 500) + '... (truncated)';
+                        }} catch(e) {{
+                            return 'Could not capture DOM: ' + e.message;
+                        }}
+                    }}""")
+                    evidence["dom_snippet"] = dom_snippet
+                except Exception as e:
+                    evidence["dom_snippet"] = f"Error capturing DOM: {str(e)}"
+            
+        except Exception as e:
+            logger.error(f"Failed to capture evidence: {e}")
+        
+        return evidence
+
+    async def explain_failure_in_plain_english(self, action_data: dict, failure_reason: str, page_url: str) -> str:
+        """
+        TIER 1: Use AI to generate a human-readable failure explanation
+        """
+        if not self.ai_controller:
+            return failure_reason
+        
+        try:
+            prompt = f"""
+A web test failed. Explain why in ONE simple sentence that a non-technical manager can understand.
+
+Test URL: {page_url}
+Action attempted: {action_data.get('action', 'unknown')} on element "{action_data.get('selector', 'unknown')}"
+Technical reason: {failure_reason}
+
+Rules:
+- ONE sentence only
+- No technical jargon
+- Be specific about what went wrong
+- Sound like a QA engineer explaining to a manager
+
+Example good responses:
+- "The Buy button couldn't be clicked because a popup was blocking it."
+- "The checkout page didn't load - the server returned an error."
+- "The price wasn't visible because the page was still loading."
+
+Respond with ONLY the explanation sentence, nothing else.
+"""
+            
+            response = await self.ai_controller.client.chat.completions.create(
+                model="gpt-4o-mini",  # Use cheaper model for simple explanations
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=100,
+                temperature=0.3
+            )
+            
+            explanation = response.choices[0].message.content.strip()
+            logger.info(f"AI explanation: {explanation}")
+            return explanation
+            
+        except Exception as e:
+            logger.error(f"Failed to generate AI explanation: {e}")
+            return failure_reason
+
     async def run_test(self, url: str, instruction: str) -> dict:
         """
         Runs a test using Playwright with AI-powered instruction execution.
@@ -753,6 +842,18 @@ class AuthenticationAwareWorker:
                     verification_results = []  # Store all verification outcomes
                     verifications_passed = 0
                     verifications_total = 0
+                    
+                    # TIER 1: Failure tracking for enterprise features
+                    failure_info = {
+                        "step": None,
+                        "timestamp": None,
+                        "action": None,
+                        "selector": None,
+                        "reason": None,
+                        "screenshot_b64": None,
+                        "dom_snippet": None
+                    }
+                    failure_captured = False
                     
                     while step_count < max_steps:
                         step_count += 1
@@ -823,6 +924,14 @@ class AuthenticationAwareWorker:
                                         execution_log.append(f"    Actual: {verify_result.get('actual', 'N/A')}")
                                         execution_log.append(f"    Reason: {verify_result.get('reason', 'Unknown')}")
                                         execution_log.append(f"    Selector: {verify_result.get('selector_used', 'N/A')}")
+                                        
+                                        # TIER 1: Capture failure evidence
+                                        if not failure_captured:
+                                            failure_info = await self.capture_failure_evidence(
+                                                page, step_count, action_data, start_time
+                                            )
+                                            failure_info["reason"] = verify_result.get('reason', 'Verification failed')
+                                            failure_captured = True
                                     
                                     action_history.append(f"verify: {assertion} - {'PASS' if verify_result.get('passed') else 'FAIL'}")
                                 else:
@@ -842,6 +951,14 @@ class AuthenticationAwareWorker:
                                 else:
                                     execution_log.append(f"✗ Failed to execute action")
                                     test_failed = True  # Mark test as failed
+                                    
+                                    # TIER 1: Capture failure evidence
+                                    if not failure_captured:
+                                        failure_info = await self.capture_failure_evidence(
+                                            page, step_count, action_data, start_time
+                                        )
+                                        failure_info["reason"] = f"Failed to execute {action_data.get('action')} on {action_data.get('selector')}"
+                                        failure_captured = True
                                     break
                             
                             # Small delay between actions
@@ -881,17 +998,26 @@ class AuthenticationAwareWorker:
             
             duration = (datetime.now() - start_time).total_seconds() * 1000
             
-            # Get verification counts (may not exist if AI wasn't used)
+            # Get verification counts and failure_info (may not exist if AI wasn't used)
             try:
                 v_passed = verifications_passed
                 v_total = verifications_total
+                fail_info = failure_info if failure_captured else None
             except NameError:
                 v_passed = 0
                 v_total = 0
+                fail_info = None
             
-            # Determine status (fail if error OR action failed OR verification failed)
+            # TIER 1: Determine status with INCONCLUSIVE for tests without verifications
             has_failed_verifications = v_total > 0 and v_passed < v_total
-            status = "fail" if (error or test_failed or has_failed_verifications) else "pass"
+            
+            if error or test_failed or has_failed_verifications:
+                status = "fail"
+            elif v_total == 0:
+                # TIER 1: No verifications = INCONCLUSIVE, not PASS
+                status = "inconclusive"
+            else:
+                status = "pass"
             
             # Build verification summary
             verification_summary = ""
@@ -901,20 +1027,49 @@ class AuthenticationAwareWorker:
                     verification_summary += " ✓"
                 else:
                     verification_summary += f" ({v_total - v_passed} failed)"
+            elif status == "inconclusive":
+                verification_summary = "\n\n⚠️ No verifications performed - cannot confirm test success"
+            
+            # TIER 1: Generate plain English explanation for failures
+            plain_english_explanation = None
+            if status == "fail" and fail_info and fail_info.get("reason"):
+                try:
+                    plain_english_explanation = await self.explain_failure_in_plain_english(
+                        {"action": fail_info.get("action"), "selector": fail_info.get("selector")},
+                        fail_info.get("reason", "Unknown failure"),
+                        url
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not generate plain English explanation: {e}")
+                    plain_english_explanation = fail_info.get("reason")
             
             # Construct summaries
             if status == "pass":
-                ai_summary = f"Successfully completed test on {url}. Page title: '{title}'.{verification_summary}\n" + "\n".join(execution_log)
+                ai_summary = f"✅ Successfully completed test on {url}. Page title: '{title}'.{verification_summary}\n" + "\n".join(execution_log)
                 bug_summary = None
+            elif status == "inconclusive":
+                ai_summary = f"⚠️ Test completed but no verifications performed on {url}.{verification_summary}\n" + "\n".join(execution_log)
+                bug_summary = "No verifications were performed - add verification steps to confirm success"
             else:
-                ai_summary = f"Failed to complete test on {url}.{verification_summary}\n" + "\n".join(execution_log)
-                bug_summary = error if error else ("Verification failed" if has_failed_verifications else "Test execution incomplete")
+                ai_summary = f"❌ Failed to complete test on {url}.{verification_summary}\n" + "\n".join(execution_log)
+                bug_summary = plain_english_explanation or error or ("Verification failed" if has_failed_verifications else "Test execution incomplete")
 
-            return {
+            # TIER 1: Enhanced result structure
+            result = {
                 "status": status,
                 "duration_ms": int(duration),
                 "ai_summary": ai_summary,
                 "bug_summary": bug_summary,
                 "video_path": str(video_path) if video_path else None,
-                "execution_log": execution_log
+                "execution_log": execution_log,
+                # TIER 1 additions
+                "verifications": {
+                    "total": v_total,
+                    "passed": v_passed,
+                    "failed": v_total - v_passed
+                },
+                "failure_info": fail_info,
+                "plain_english_explanation": plain_english_explanation
             }
+            
+            return result
