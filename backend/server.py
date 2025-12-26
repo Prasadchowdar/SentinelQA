@@ -143,6 +143,8 @@ class TestRun(BaseModel):
     verifications: Optional[Dict[str, int]] = None  # {total, passed, failed}
     failure_info: Optional[Dict[str, Any]] = None   # {step, timestamp, action, selector, reason, screenshot_b64, dom_snippet}
     plain_english_explanation: Optional[str] = None
+    # Self-Healing additions
+    healing_summary: Optional[Dict[str, Any]] = None  # {total_healed, strategies_used, history}
 
 class Integration(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -897,7 +899,9 @@ async def execute_test_background(run_id: str, project_id: str, url: str, instru
                     k: v for k, v in (result.get("failure_info") or {}).items() 
                     if k != "screenshot_b64"  # Don't store base64 in DB (too large)
                 } if result.get("failure_info") else None,
-                "plain_english_explanation": result.get("plain_english_explanation")
+                "plain_english_explanation": result.get("plain_english_explanation"),
+                # Self-Healing additions
+                "healing_summary": result.get("healing_summary")
             }}
         )
         

@@ -87,6 +87,412 @@ class PageStateTracker:
         return self.action_count >= 3  # After 3+ actions, be more eager to complete
 
 
+class SelfHealingEngine:
+    """
+    Self-Healing Tests: When selectors fail, AI automatically finds the element
+    using alternative strategies - no human intervention required.
+    
+    Strategies (in order of preference):
+    1. Text content match
+    2. Aria-label/role match
+    3. Data-testid match
+    4. Nearby landmark + position
+    5. AI Visual Healing (GPT-4 Vision)
+    """
+    
+    # Selector reliability scores (higher = more reliable)
+    SELECTOR_SCORES = {
+        "data-testid": 100,
+        "id": 90,
+        "aria-label": 85,
+        "text": 80,
+        "role": 75,
+        "class_semantic": 60,  # .btn-primary
+        "class_utility": 30,   # .mt-4, .flex
+        "xpath_position": 10,  # //div[3]/button[1]
+    }
+    
+    def __init__(self):
+        self.healing_history = []  # Track all healing events
+        self.healed_selectors = {}  # Cache: original -> healed
+        
+    async def find_element_with_healing(
+        self, 
+        page, 
+        original_selector: str, 
+        context: Dict,
+        ai_controller = None
+    ) -> Dict:
+        """
+        Try to find element, healing the selector if needed.
+        
+        Returns:
+        {
+            "found": bool,
+            "element": Locator or None,
+            "healed": bool,
+            "original_selector": str,
+            "healed_selector": str or None,
+            "strategy_used": str,
+            "confidence": "high" | "medium" | "low"
+        }
+        """
+        result = {
+            "found": False,
+            "element": None,
+            "healed": False,
+            "original_selector": original_selector,
+            "healed_selector": None,
+            "strategy_used": None,
+            "confidence": "low"
+        }
+        
+        # Check healing cache first
+        if original_selector in self.healed_selectors:
+            cached = self.healed_selectors[original_selector]
+            try:
+                element = page.locator(cached["selector"])
+                if await element.count() > 0:
+                    result.update({
+                        "found": True,
+                        "element": element.first,
+                        "healed": True,
+                        "healed_selector": cached["selector"],
+                        "strategy_used": "cached_healing",
+                        "confidence": cached.get("confidence", "medium")
+                    })
+                    return result
+            except:
+                pass
+        
+        # Strategy 1: Try original selector
+        try:
+            if original_selector.startswith("text="):
+                element = page.get_by_text(original_selector.replace("text=", ""), exact=False)
+            else:
+                element = page.locator(original_selector)
+            
+            if await element.count() > 0 and await element.first.is_visible():
+                result.update({
+                    "found": True,
+                    "element": element.first,
+                    "strategy_used": "original",
+                    "confidence": "high"
+                })
+                return result
+        except Exception as e:
+            logger.warning(f"Original selector failed: {original_selector} - {e}")
+        
+        # === SELF-HEALING BEGINS ===
+        logger.info(f"🔧 Self-healing activated for: {original_selector}")
+        
+        # Strategy 2: Text content healing
+        text_hint = context.get("reasoning", "") or context.get("value", "")
+        if text_hint:
+            healed = await self._heal_by_text(page, text_hint)
+            if healed["found"]:
+                result.update(healed)
+                result["healed"] = True
+                self._cache_healing(original_selector, healed)
+                return result
+        
+        # Strategy 3: Aria-label healing
+        healed = await self._heal_by_aria(page, original_selector, context)
+        if healed["found"]:
+            result.update(healed)
+            result["healed"] = True
+            self._cache_healing(original_selector, healed)
+            return result
+        
+        # Strategy 4: Data-testid healing
+        healed = await self._heal_by_testid(page, original_selector)
+        if healed["found"]:
+            result.update(healed)
+            result["healed"] = True
+            self._cache_healing(original_selector, healed)
+            return result
+        
+        # Strategy 5: AI Visual Healing (last resort)
+        if ai_controller:
+            healed = await self._heal_by_ai_vision(page, original_selector, context, ai_controller)
+            if healed["found"]:
+                result.update(healed)
+                result["healed"] = True
+                self._cache_healing(original_selector, healed)
+                return result
+        
+        logger.error(f"❌ Self-healing failed for: {original_selector}")
+        return result
+    
+    async def _heal_by_text(self, page, text_hint: str) -> Dict:
+        """Strategy 2: Find element by text content"""
+        result = {"found": False}
+        
+        # Extract meaningful keywords from the hint
+        keywords = [w for w in text_hint.split() if len(w) > 2][:3]
+        
+        for keyword in keywords:
+            try:
+                element = page.get_by_text(keyword, exact=False)
+                if await element.count() > 0:
+                    # Prefer clickable elements
+                    for tag in ["button", "a", "input[type=submit]"]:
+                        clickable = element.locator(f"self::{tag}, ancestor::{tag}").first
+                        try:
+                            if await clickable.is_visible():
+                                result.update({
+                                    "found": True,
+                                    "element": clickable,
+                                    "healed_selector": f'text="{keyword}"',
+                                    "strategy_used": "text_content",
+                                    "confidence": "medium"
+                                })
+                                logger.info(f"✓ Healed using text: '{keyword}'")
+                                return result
+                        except:
+                            continue
+                    
+                    # Fallback to any visible element with the text
+                    if await element.first.is_visible():
+                        result.update({
+                            "found": True,
+                            "element": element.first,
+                            "healed_selector": f'text="{keyword}"',
+                            "strategy_used": "text_content",
+                            "confidence": "medium"
+                        })
+                        logger.info(f"✓ Healed using text: '{keyword}'")
+                        return result
+            except:
+                continue
+        
+        return result
+    
+    async def _heal_by_aria(self, page, original_selector: str, context: Dict) -> Dict:
+        """Strategy 3: Find element by aria-label or role"""
+        result = {"found": False}
+        
+        # Extract hints from context and original selector
+        action = context.get("action", "click")
+        hints = []
+        
+        # Try to extract text from original selector
+        if "button" in original_selector.lower():
+            hints.append("button")
+        if "search" in original_selector.lower():
+            hints.append("search")
+        if "submit" in original_selector.lower():
+            hints.append("submit")
+        if "login" in original_selector.lower():
+            hints.extend(["login", "sign in"])
+        
+        # Add reasoning hints
+        reasoning = context.get("reasoning", "").lower()
+        for word in ["search", "login", "submit", "buy", "add", "cart", "checkout"]:
+            if word in reasoning:
+                hints.append(word)
+        
+        for hint in hints:
+            try:
+                # Try aria-label
+                selector = f'[aria-label*="{hint}" i]'
+                element = page.locator(selector)
+                if await element.count() > 0 and await element.first.is_visible():
+                    result.update({
+                        "found": True,
+                        "element": element.first,
+                        "healed_selector": selector,
+                        "strategy_used": "aria_label",
+                        "confidence": "high"
+                    })
+                    logger.info(f"✓ Healed using aria-label: '{hint}'")
+                    return result
+                
+                # Try role
+                role_map = {
+                    "button": "button",
+                    "search": "searchbox",
+                    "submit": "button",
+                    "link": "link"
+                }
+                if hint in role_map:
+                    role_selector = f'[role="{role_map[hint]}"]'
+                    element = page.locator(role_selector)
+                    if await element.count() > 0:
+                        result.update({
+                            "found": True,
+                            "element": element.first,
+                            "healed_selector": role_selector,
+                            "strategy_used": "role",
+                            "confidence": "medium"
+                        })
+                        return result
+            except:
+                continue
+        
+        return result
+    
+    async def _heal_by_testid(self, page, original_selector: str) -> Dict:
+        """Strategy 4: Find element by data-testid pattern"""
+        result = {"found": False}
+        
+        # Extract potential testid from original selector
+        patterns = []
+        
+        # Parse class names or IDs from original selector
+        import re
+        class_matches = re.findall(r'\.([a-zA-Z][a-zA-Z0-9_-]*)', original_selector)
+        id_matches = re.findall(r'#([a-zA-Z][a-zA-Z0-9_-]*)', original_selector)
+        
+        patterns.extend(class_matches)
+        patterns.extend(id_matches)
+        
+        for pattern in patterns:
+            try:
+                # Try exact data-testid
+                selector = f'[data-testid="{pattern}"]'
+                element = page.locator(selector)
+                if await element.count() > 0:
+                    result.update({
+                        "found": True,
+                        "element": element.first,
+                        "healed_selector": selector,
+                        "strategy_used": "data_testid",
+                        "confidence": "high"
+                    })
+                    logger.info(f"✓ Healed using data-testid: '{pattern}'")
+                    return result
+                
+                # Try partial match
+                selector = f'[data-testid*="{pattern}" i]'
+                element = page.locator(selector)
+                if await element.count() > 0:
+                    result.update({
+                        "found": True,
+                        "element": element.first,
+                        "healed_selector": selector,
+                        "strategy_used": "data_testid",
+                        "confidence": "medium"
+                    })
+                    return result
+            except:
+                continue
+        
+        return result
+    
+    async def _heal_by_ai_vision(
+        self, 
+        page, 
+        failed_selector: str, 
+        context: Dict,
+        ai_controller
+    ) -> Dict:
+        """Strategy 5: Use GPT-4 Vision to find the element visually"""
+        result = {"found": False}
+        
+        try:
+            # Capture screenshot
+            screenshot = await page.screenshot(type="png")
+            screenshot_b64 = base64.b64encode(screenshot).decode()
+            
+            prompt = f"""
+Looking at this webpage screenshot, help me find an element.
+
+The test was trying to find: {failed_selector}
+The action to perform: {context.get('action', 'click')}
+The reasoning was: {context.get('reasoning', 'Not provided')}
+
+Analyze the screenshot and provide the BEST CSS selector to find this element.
+
+Return ONLY valid JSON:
+{{
+    "found": true or false,
+    "visual_description": "Description of what the element looks like",
+    "suggested_selector": "CSS selector to find it",
+    "selector_type": "css",
+    "confidence": "high" | "medium" | "low"
+}}
+"""
+            
+            response = await ai_controller.client.chat.completions.create(
+                model="gpt-4o-mini",  # Use cheaper model for healing
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{screenshot_b64}"}
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=300,
+                temperature=0.1
+            )
+            
+            import json
+            response_text = response.choices[0].message.content.strip()
+            
+            # Parse JSON from response
+            if "```json" in response_text:
+                response_text = response_text.split("```json")[1].split("```")[0]
+            elif "```" in response_text:
+                response_text = response_text.split("```")[1].split("```")[0]
+            
+            ai_result = json.loads(response_text.strip())
+            
+            if ai_result.get("found") and ai_result.get("suggested_selector"):
+                # Verify the suggested selector works
+                suggested = ai_result["suggested_selector"]
+                try:
+                    element = page.locator(suggested)
+                    if await element.count() > 0:
+                        result.update({
+                            "found": True,
+                            "element": element.first,
+                            "healed_selector": suggested,
+                            "strategy_used": "ai_vision",
+                            "confidence": ai_result.get("confidence", "medium"),
+                            "visual_description": ai_result.get("visual_description")
+                        })
+                        logger.info(f"✓ AI healed selector: {suggested}")
+                        return result
+                except:
+                    pass
+        
+        except Exception as e:
+            logger.error(f"AI visual healing failed: {e}")
+        
+        return result
+    
+    def _cache_healing(self, original: str, healed_result: Dict):
+        """Cache successful healing for future use"""
+        self.healed_selectors[original] = {
+            "selector": healed_result.get("healed_selector"),
+            "strategy": healed_result.get("strategy_used"),
+            "confidence": healed_result.get("confidence"),
+            "healed_at": datetime.now().isoformat()
+        }
+        
+        self.healing_history.append({
+            "original": original,
+            "healed": healed_result.get("healed_selector"),
+            "strategy": healed_result.get("strategy_used"),
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        logger.info(f"📝 Cached healing: {original} → {healed_result.get('healed_selector')}")
+    
+    def get_healing_summary(self) -> Dict:
+        """Get summary of all healing events"""
+        return {
+            "total_healed": len(self.healing_history),
+            "strategies_used": {},
+            "history": self.healing_history[-10:]  # Last 10 events
+        }
+
 
 class AIVisionController:
     """
@@ -290,6 +696,10 @@ class AuthenticationAwareWorker:
         else:
             self.ai_controller = None
             logger.warning("OPENAI_API_KEY not set - AI features disabled")
+        
+        # Initialize Self-Healing Engine
+        self.healing_engine = SelfHealingEngine()
+        logger.info("Self-Healing Engine initialized")
     
     async def capture_page_state(self, page: Page) -> tuple[str, str]:
         """Capture screenshot and extract key HTML elements"""
@@ -319,6 +729,28 @@ class AuthenticationAwareWorker:
         }""")
         
         return screenshot_base64, html
+    
+    async def find_with_healing(self, page: Page, selector: str, context: Dict) -> Dict:
+        """
+        Find element with self-healing capability.
+        Delegates to SelfHealingEngine for intelligent element finding.
+        
+        Returns:
+        {
+            "found": bool,
+            "element": Locator or None,
+            "healed": bool,
+            "healed_selector": str or None,
+            "strategy_used": str,
+            "confidence": str
+        }
+        """
+        return await self.healing_engine.find_element_with_healing(
+            page=page,
+            original_selector=selector,
+            context=context,
+            ai_controller=self.ai_controller
+        )
     
     async def execute_action(self, page: Page, action_data: Dict) -> bool:
         """Execute a single action based on AI's decision"""
@@ -1069,7 +1501,9 @@ Respond with ONLY the explanation sentence, nothing else.
                     "failed": v_total - v_passed
                 },
                 "failure_info": fail_info,
-                "plain_english_explanation": plain_english_explanation
+                "plain_english_explanation": plain_english_explanation,
+                # Self-Healing additions
+                "healing_summary": self.healing_engine.get_healing_summary()
             }
             
             return result
