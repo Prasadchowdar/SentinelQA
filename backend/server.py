@@ -1,3 +1,10 @@
+# CRITICAL: Windows asyncio fix must be at the VERY TOP before any other imports
+# This fixes Playwright subprocess creation on Windows
+import sys
+import asyncio
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, Header, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
