@@ -4,21 +4,49 @@ import base64
 import json
 import os
 import sys
+import concurrent.futures
 from datetime import datetime
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, Page
 from openai import AsyncOpenAI
 
-# Fix Windows asyncio subprocess issue for Playwright
-if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
 # Ensure directories exist
 os.makedirs("videos", exist_ok=True)
 os.makedirs("screenshots", exist_ok=True)
 
 logger = logging.getLogger(__name__)
+
+
+def _run_playwright_in_thread(coro_func, *args, **kwargs):
+    """
+    Run Playwright async code in a dedicated thread with proper Windows event loop.
+    This is required because uvicorn's event loop doesn't support subprocess on Windows.
+    
+    Args:
+        coro_func: The async function to run (must return a coroutine)
+        *args, **kwargs: Arguments to pass to the function
+    
+    Returns:
+        The result of the async function
+    """
+    def run_in_new_loop():
+        # Create a new event loop with proper Windows subprocess support
+        if sys.platform == 'win32':
+            loop = asyncio.ProactorEventLoop()
+        else:
+            loop = asyncio.new_event_loop()
+        
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro_func(*args, **kwargs))
+        finally:
+            loop.close()
+    
+    # Run in a thread pool to not block the main event loop
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(run_in_new_loop)
+        return future.result()
 
 
 class PageStateTracker:
@@ -1512,3 +1540,20 @@ Respond with ONLY the explanation sentence, nothing else.
             }
             
             return result
+    
+    def run_test_sync(self, url: str, instruction: str) -> dict:
+        """
+        Run test synchronously in a thread with proper Windows event loop support.
+        
+        This is the recommended entry point when calling from uvicorn on Windows,
+        as it creates a ProactorEventLoop in a dedicated thread that properly
+        supports subprocess creation (required for Playwright).
+        
+        Args:
+            url: The URL to test
+            instruction: The test instruction
+            
+        Returns:
+            dict: The test result
+        """
+        return _run_playwright_in_thread(self.run_test, url, instruction)

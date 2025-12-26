@@ -877,8 +877,9 @@ async def execute_test_background(run_id: str, project_id: str, url: str, instru
     worker = AuthenticationAwareWorker()
     
     try:
-        # Run the actual test (Takes 30s+)
-        result = await worker.run_test(url, instruction)
+        # Run the actual test in a dedicated thread with proper Windows event loop
+        # This is required because uvicorn's event loop doesn't support subprocess on Windows
+        result = worker.run_test_sync(url, instruction)
         
         # 🔧 FIX VIDEO URL: Convert file path to accessible URL
         final_video_url = None
