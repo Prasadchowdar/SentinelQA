@@ -3,11 +3,16 @@ import asyncio
 import base64
 import json
 import os
+import sys
 from datetime import datetime
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, Page
 from openai import AsyncOpenAI
+
+# Fix Windows asyncio subprocess issue for Playwright
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 # Ensure directories exist
 os.makedirs("videos", exist_ok=True)
