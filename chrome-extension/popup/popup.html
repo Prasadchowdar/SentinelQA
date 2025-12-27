@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SentinelQA Recorder</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round" />
+                    <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round" />
+                    <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round" />
+                </svg>
+                <span>SentinelQA Recorder</span>
+            </div>
+        </header>
+
+        <!-- Status Banner -->
+        <div id="statusBanner" class="status-banner hidden">
+            <div class="status-dot"></div>
+            <span id="statusText">Recording...</span>
+        </div>
+
+        <!-- Current URL -->
+        <div class="url-container">
+            <label>Recording on:</label>
+            <div id="currentUrl" class="url-display">-</div>
+        </div>
+
+        <!-- Recording Controls -->
+        <div class="controls">
+            <button id="startBtn" class="btn btn-primary">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="12" cy="12" r="10" />
+                </svg>
+                Start Recording
+            </button>
+            <button id="stopBtn" class="btn btn-danger hidden">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+                Stop Recording
+            </button>
+        </div>
+
+        <!-- Recorded Actions List -->
+        <div id="actionsContainer" class="actions-container hidden">
+            <div class="section-header">
+                <h3>Recorded Actions</h3>
+                <span id="actionCount" class="badge">0</span>
+            </div>
+            <ul id="actionsList" class="actions-list">
+                <!-- Actions will be populated here -->
+            </ul>
+        </div>
+
+        <!-- Generated Test Instruction -->
+        <div id="resultContainer" class="result-container hidden">
+            <div class="section-header">
+                <h3>Generated Test Instruction</h3>
+            </div>
+            <textarea id="generatedInstruction" class="instruction-textarea" readonly></textarea>
+
+            <div class="result-actions">
+                <button id="copyBtn" class="btn btn-secondary">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                    Copy
+                </button>
+                <button id="sendBtn" class="btn btn-primary">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13" />
+                        <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                    Send to SentinelQA
+                </button>
+            </div>
+        </div>
+
+        <!-- Clear Button -->
+        <div id="clearContainer" class="clear-container hidden">
+            <button id="clearBtn" class="btn btn-ghost">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+                Clear & Start New
+            </button>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>SentinelQA v1.0</span>
+            <a href="#" id="settingsLink">Settings</a>
+        </footer>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+
+</html>
