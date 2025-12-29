@@ -1,31 +1,86 @@
-/* SentinelQA App Styles */
+/*
+ * App.css - Global App Overrides
+ * Plasma Terminal Design System
+ */
 
+/* App container */
 .App {
+  min-height: 100vh;
+  background: var(--void-0);
+}
+
+/* Main layout with sidebar */
+.app-layout {
+  display: flex;
   min-height: 100vh;
 }
 
-/* Additional utility classes */
-.line-clamp-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.app-sidebar {
+  width: 260px;
+  background: var(--void-1);
+  border-right: 1px solid var(--void-4);
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 
-.line-clamp-3 {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.app-main {
+  flex: 1;
+  margin-left: 260px;
+  min-height: 100vh;
 }
 
-/* Video player styles */
-.video-player {
-  background: linear-gradient(180deg, #0A0A0A 0%, #171717 100%);
+/* Page header */
+.page-header {
+  padding: 32px 40px;
+  border-bottom: 1px solid var(--void-3);
+  background: var(--void-1);
 }
 
-/* Focus visible */
-*:focus-visible {
-  outline: 2px solid hsl(217 91% 60%);
-  outline-offset: 2px;
+.page-title {
+  font-family: 'Clash Display', sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-100);
+  margin: 0;
+}
+
+.page-subtitle {
+  font-size: 14px;
+  color: var(--text-50);
+  margin-top: 8px;
+}
+
+/* Page content */
+.page-content {
+  padding: 40px;
+}
+
+/* Card grid */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 24px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .app-sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+
+  .app-sidebar.open {
+    transform: translateX(0);
+  }
+
+  .app-main {
+    margin-left: 0;
+  }
+
+  .page-content {
+    padding: 24px;
+  }
 }
