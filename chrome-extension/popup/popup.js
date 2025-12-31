@@ -1,6 +1,9 @@
 /**
  * SentinelQA Recorder - Popup Logic
  * Handles UI interactions and communication with content/background scripts
+ * 
+ * KEY FIX: Actions are now loaded from persistent storage and updated via
+ * storage change listener, surviving popup close/reopen cycles.
  */
 
 // DOM Elements
@@ -29,6 +32,8 @@ let currentUrl = '';
  * Initialize popup
  */
 async function init() {
+    console.log('[SentinelQA Popup] Initializing...');
+
     // Get current tab
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     currentTabId = tab.id;
@@ -36,31 +41,74 @@ async function init() {
     currentUrlEl.textContent = currentUrl;
 
     // Load existing state from storage
-    const state = await chrome.storage.local.get(['isRecording', 'recordedActions', 'recordingTabId']);
+    await loadStateFromStorage();
 
-    if (state.isRecording && state.recordingTabId === currentTabId) {
-        isRecording = true;
-        recordedActions = state.recordedActions || [];
-        updateUI();
-    } else if (state.recordedActions && state.recordedActions.length > 0 && !state.isRecording) {
-        // Show previous recording results
-        recordedActions = state.recordedActions;
-        showResults();
-    }
+    // Listen for storage changes (when background script saves new actions)
+    chrome.storage.onChanged.addListener(handleStorageChange);
 
-    // Listen for action updates from content script
+    // Also listen for direct messages from background
     chrome.runtime.onMessage.addListener(handleMessage);
+
+    console.log('[SentinelQA Popup] Initialized. Recording:', isRecording, 'Actions:', recordedActions.length);
 }
 
 /**
- * Handle messages from content script
+ * Load state from storage
+ */
+async function loadStateFromStorage() {
+    const state = await chrome.storage.local.get(['isRecording', 'recordedActions', 'recordingTabId']);
+
+    console.log('[SentinelQA Popup] Loaded state:', state);
+
+    isRecording = state.isRecording || false;
+    recordedActions = state.recordedActions || [];
+
+    // Update UI based on state
+    if (isRecording && state.recordingTabId === currentTabId) {
+        updateUI();
+    } else if (recordedActions.length > 0 && !isRecording) {
+        // Show previous recording results
+        showResults();
+    } else {
+        // Reset to initial state
+        startBtn.classList.remove('hidden');
+        stopBtn.classList.add('hidden');
+        statusBanner.classList.add('hidden');
+        actionsContainer.classList.add('hidden');
+        resultContainer.classList.add('hidden');
+        clearContainer.classList.add('hidden');
+    }
+}
+
+/**
+ * Handle storage changes (real-time updates from background script)
+ */
+function handleStorageChange(changes, areaName) {
+    if (areaName !== 'local') return;
+
+    console.log('[SentinelQA Popup] Storage changed:', Object.keys(changes));
+
+    if (changes.recordedActions) {
+        recordedActions = changes.recordedActions.newValue || [];
+        console.log('[SentinelQA Popup] Actions updated:', recordedActions.length);
+        updateActionsList();
+    }
+
+    if (changes.isRecording) {
+        isRecording = changes.isRecording.newValue || false;
+        updateUI();
+    }
+}
+
+/**
+ * Handle messages from background script
  */
 function handleMessage(message, sender, sendResponse) {
-    if (message.type === 'ACTION_RECORDED' && sender.tab?.id === currentTabId) {
-        recordedActions.push(message.action);
+    console.log('[SentinelQA Popup] Message received:', message.type);
+
+    if (message.type === 'ACTIONS_UPDATED') {
+        recordedActions = message.actions || [];
         updateActionsList();
-        // Save to storage
-        chrome.storage.local.set({ recordedActions });
     }
 }
 
@@ -68,10 +116,12 @@ function handleMessage(message, sender, sendResponse) {
  * Start recording
  */
 async function startRecording() {
+    console.log('[SentinelQA Popup] Starting recording...');
+
     isRecording = true;
     recordedActions = [];
 
-    // Save state
+    // Save state to storage
     await chrome.storage.local.set({
         isRecording: true,
         recordedActions: [],
@@ -80,7 +130,22 @@ async function startRecording() {
     });
 
     // Notify content script to start recording
-    await chrome.tabs.sendMessage(currentTabId, { type: 'START_RECORDING' });
+    try {
+        await chrome.tabs.sendMessage(currentTabId, { type: 'START_RECORDING' });
+        console.log('[SentinelQA Popup] Content script notified');
+    } catch (error) {
+        console.error('[SentinelQA Popup] Error notifying content script:', error);
+        // Try to inject the content script first
+        try {
+            await chrome.scripting.executeScript({
+                target: { tabId: currentTabId },
+                files: ['content/content.js']
+            });
+            await chrome.tabs.sendMessage(currentTabId, { type: 'START_RECORDING' });
+        } catch (e) {
+            console.error('[SentinelQA Popup] Failed to inject content script:', e);
+        }
+    }
 
     updateUI();
 }
@@ -89,13 +154,23 @@ async function startRecording() {
  * Stop recording
  */
 async function stopRecording() {
+    console.log('[SentinelQA Popup] Stopping recording...');
+
     isRecording = false;
 
     // Save state
     await chrome.storage.local.set({ isRecording: false });
 
     // Notify content script to stop recording
-    await chrome.tabs.sendMessage(currentTabId, { type: 'STOP_RECORDING' });
+    try {
+        await chrome.tabs.sendMessage(currentTabId, { type: 'STOP_RECORDING' });
+    } catch (error) {
+        console.error('[SentinelQA Popup] Error stopping content script:', error);
+    }
+
+    // Reload actions from storage (in case we missed any)
+    const state = await chrome.storage.local.get(['recordedActions']);
+    recordedActions = state.recordedActions || [];
 
     showResults();
 }
@@ -132,16 +207,18 @@ function updateActionsList() {
     recordedActions.forEach((action, index) => {
         const li = document.createElement('li');
         li.innerHTML = `
-      <span class="action-number">${index + 1}</span>
-      <span class="action-text">
-        <span class="action-type">${action.type}</span>: ${action.description}
-      </span>
-    `;
+            <span class="action-number">${index + 1}</span>
+            <span class="action-text">
+                <span class="action-type">${action.type}</span>: ${action.description || action.selector || 'Unknown'}
+            </span>
+        `;
         actionsList.appendChild(li);
     });
 
     // Scroll to bottom
     actionsList.scrollTop = actionsList.scrollHeight;
+
+    console.log('[SentinelQA Popup] UI updated with', recordedActions.length, 'actions');
 }
 
 /**
@@ -176,30 +253,28 @@ function generateTestInstruction() {
     // Build instruction parts
     const parts = [];
 
-    // Add URL context (but shortened)
-    const urlObj = new URL(currentUrl);
-
     // Group and simplify actions
     let currentForm = null;
     const simplifiedActions = [];
 
     for (const action of recordedActions) {
+        // Skip clicks on input fields (just focus events)
         if (action.type === 'click' && action.elementType === 'input') {
-            // Skip clicks on input fields (focus events)
             continue;
         }
 
-        if (action.type === 'type' && currentForm === null) {
-            currentForm = { type: 'form', fields: [] };
-            simplifiedActions.push(currentForm);
-        }
-
-        if (action.type === 'type' && currentForm) {
+        // Group consecutive type actions into a form
+        if (action.type === 'type') {
+            if (currentForm === null) {
+                currentForm = { type: 'form', fields: [] };
+                simplifiedActions.push(currentForm);
+            }
             currentForm.fields.push({
                 label: action.fieldLabel || action.fieldName || 'field',
                 value: action.value
             });
-        } else if (action.type !== 'type') {
+        } else {
+            // Non-type action - close any open form group
             currentForm = null;
             simplifiedActions.push(action);
         }
@@ -207,11 +282,12 @@ function generateTestInstruction() {
 
     // Generate instruction text
     for (const action of simplifiedActions) {
-        if (action.type === 'form') {
+        if (action.type === 'form' && action.fields && action.fields.length > 0) {
             const fieldTexts = action.fields.map(f => `"${f.value}" in ${f.label}`).join(', ');
             parts.push(`Fill in ${fieldTexts}`);
         } else if (action.type === 'click') {
-            parts.push(`Click on "${action.elementText || action.description}"`);
+            const target = action.elementText || action.description || 'element';
+            parts.push(`Click on "${target}"`);
         } else if (action.type === 'navigate') {
             parts.push(`Navigate to ${action.url}`);
         } else if (action.type === 'submit') {
@@ -223,7 +299,12 @@ function generateTestInstruction() {
 
     // Combine into single instruction
     if (parts.length === 0) {
-        return `Test the page at ${urlObj.hostname}${urlObj.pathname}`;
+        try {
+            const urlObj = new URL(currentUrl);
+            return `Test the page at ${urlObj.hostname}${urlObj.pathname}`;
+        } catch {
+            return 'Test the current page';
+        }
     }
 
     return parts.join(', then ');
@@ -263,8 +344,7 @@ async function sendToSentinelQA() {
         sendBtn.disabled = true;
         sendBtn.innerHTML = '<span class="loading"></span> Sending...';
 
-        // For now, open SentinelQA with pre-filled data
-        // In production, this would make an API call
+        // Open SentinelQA with pre-filled data
         const params = new URLSearchParams({
             url: currentUrl,
             instruction: instruction
@@ -281,12 +361,12 @@ async function sendToSentinelQA() {
     } finally {
         sendBtn.disabled = false;
         sendBtn.innerHTML = `
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <line x1="22" y1="2" x2="11" y2="13"/>
-        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-      </svg>
-      Send to SentinelQA
-    `;
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="22" y1="2" x2="11" y2="13"/>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+            Send to SentinelQA
+        `;
     }
 }
 

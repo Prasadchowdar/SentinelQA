@@ -1,10 +1,10 @@
 /**
  * SentinelQA Recorder - Background Service Worker
  * Manages extension state and coordinates between popup and content scripts
+ * 
+ * KEY FIX: Actions are now persistently saved to chrome.storage.local
+ * so they survive popup close/reopen cycles.
  */
-
-// Track which tabs are being recorded
-const recordingTabs = new Map();
 
 /**
  * Handle messages from popup and content scripts
@@ -17,32 +17,91 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             break;
 
         case 'ACTION_RECORDED':
-            // Forward action to popup if it's open
-            // Also store in memory for the current session
-            if (sender.tab?.id) {
-                const tabActions = recordingTabs.get(sender.tab.id) || [];
-                tabActions.push(message.action);
-                recordingTabs.set(sender.tab.id, tabActions);
-            }
+            // CRITICAL FIX: Save action to persistent storage immediately
+            handleActionRecorded(message.action, sender.tab?.id);
+            sendResponse({ success: true });
             break;
 
         case 'GET_ACTIONS':
-            // Return recorded actions for a specific tab
-            const actions = recordingTabs.get(message.tabId) || [];
-            sendResponse({ actions });
-            break;
+            // Return recorded actions from storage
+            getActionsFromStorage().then(actions => {
+                sendResponse({ actions });
+            });
+            return true; // Keep channel open for async response
 
         case 'CLEAR_ACTIONS':
-            // Clear actions for a specific tab
-            if (message.tabId) {
-                recordingTabs.delete(message.tabId);
-            }
+            // Clear all recorded actions
+            chrome.storage.local.set({ recordedActions: [] });
             sendResponse({ success: true });
+            break;
+
+        case 'START_RECORDING':
+            // Forward to content script
+            if (message.tabId) {
+                chrome.tabs.sendMessage(message.tabId, { type: 'START_RECORDING' });
+            }
+            break;
+
+        case 'STOP_RECORDING':
+            // Forward to content script  
+            if (message.tabId) {
+                chrome.tabs.sendMessage(message.tabId, { type: 'STOP_RECORDING' });
+            }
             break;
     }
 
     return true; // Keep message channel open for async responses
 });
+
+/**
+ * Handle a recorded action - save it persistently
+ */
+async function handleActionRecorded(action, tabId) {
+    try {
+        // Get current state
+        const state = await chrome.storage.local.get(['isRecording', 'recordingTabId', 'recordedActions']);
+
+        // Only save if we're still recording the same tab
+        if (!state.isRecording) {
+            console.log('[SentinelQA] Ignoring action - not recording');
+            return;
+        }
+
+        // Get existing actions or create new array
+        const actions = state.recordedActions || [];
+
+        // Add new action with tabId
+        action.tabId = tabId;
+        actions.push(action);
+
+        // Save back to storage
+        await chrome.storage.local.set({ recordedActions: actions });
+
+        console.log('[SentinelQA] Action saved:', action.type, '- Total:', actions.length);
+
+        // Also notify popup if it's open (popup will update UI)
+        try {
+            chrome.runtime.sendMessage({
+                type: 'ACTIONS_UPDATED',
+                actions: actions,
+                count: actions.length
+            });
+        } catch (e) {
+            // Popup is closed, that's okay - actions are saved to storage
+        }
+
+    } catch (error) {
+        console.error('[SentinelQA] Error saving action:', error);
+    }
+}
+
+/**
+ * Get actions from storage
+ */
+async function getActionsFromStorage() {
+    const state = await chrome.storage.local.get(['recordedActions']);
+    return state.recordedActions || [];
+}
 
 /**
  * Handle tab updated events
@@ -64,14 +123,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             timestamp: new Date().toISOString()
         };
 
-        const tabActions = recordingTabs.get(tabId) || [];
-        tabActions.push(action);
-        recordingTabs.set(tabId, tabActions);
-
-        // Update storage
-        const storageActions = (await chrome.storage.local.get(['recordedActions'])).recordedActions || [];
-        storageActions.push(action);
-        await chrome.storage.local.set({ recordedActions: storageActions });
+        // Save navigation action
+        await handleActionRecorded(action, tabId);
 
         // Re-inject content script after navigation
         try {
@@ -87,6 +140,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
             // Tell content script to resume recording
             await chrome.tabs.sendMessage(tabId, { type: 'START_RECORDING' });
+            console.log('[SentinelQA] Re-injected content script after navigation');
         } catch (error) {
             console.error('[SentinelQA] Error re-injecting content script:', error);
         }
@@ -98,14 +152,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
  * Clean up recording state if the recorded tab is closed
  */
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-    // Remove from memory
-    recordingTabs.delete(tabId);
-
     // Check if this was the recording tab
     const state = await chrome.storage.local.get(['recordingTabId']);
     if (state.recordingTabId === tabId) {
         // Stop recording since tab was closed
         await chrome.storage.local.set({ isRecording: false, recordingTabId: null });
+        console.log('[SentinelQA] Recording tab closed, stopping recording');
     }
 });
 
@@ -121,19 +173,12 @@ chrome.runtime.onInstalled.addListener((details) => {
             backendUrl: 'http://localhost:8000',
             frontendUrl: 'http://localhost:3000'
         });
+
+        // Initialize empty actions array
+        chrome.storage.local.set({ recordedActions: [], isRecording: false });
     } else if (details.reason === 'update') {
         console.log('[SentinelQA] Extension updated to version', chrome.runtime.getManifest().version);
     }
-});
-
-/**
- * Handle extension icon click (when no popup)
- * This is a fallback - normally popup.html handles the UI
- */
-chrome.action.onClicked.addListener(async (tab) => {
-    // This will only fire if default_popup is not set
-    // Since we have a popup, this won't normally execute
-    console.log('[SentinelQA] Extension icon clicked on tab:', tab.id);
 });
 
 // Log that service worker started
