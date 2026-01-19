@@ -1,5 +1,4 @@
-# CRITICAL: Windows asyncio fix must be at the VERY TOP before any other imports
-# This fixes Playwright subprocess creation on Windows
+# Windows asyncio fix - needs to be before other imports
 import sys
 import asyncio
 if sys.platform == 'win32':
@@ -26,8 +25,7 @@ import bcrypt
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# ============== IN-MEMORY DATABASE ==============
-# Simple in-memory storage (replaces MongoDB)
+# In-memory storage
 class InMemoryDB:
     def __init__(self):
         self.users: Dict[str, dict] = {}
@@ -45,19 +43,12 @@ JWT_SECRET = os.environ.get('JWT_SECRET', 'sentinel-qa-secret-key-change-in-prod
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 168  # 7 days
 
-# Create the main app
-print("=" * 60)
-print("LOADING SERVER.PY FROM:", __file__)
-print("SentinelQA Backend - In-Memory Mode (No MongoDB Required)")
-print("=" * 60)
+app = FastAPI(title="SentinelQA API")
 
-app = FastAPI(title="SentinelQA Enterprise API")
-
-# Configure CORS - MUST be before any routes
-# Allow all origins for development
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,7 +61,7 @@ async def health_check():
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-# ============== MODELS ==============
+# Models
 
 class UserCreate(BaseModel):
     email: EmailStr
