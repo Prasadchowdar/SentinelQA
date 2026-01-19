@@ -69,10 +69,10 @@ export const AuthProvider = ({ children }) => {
   };
 
   const loginWithGoogle = () => {
-    // TODO: Configure your own OAuth provider
-    // The emergent.sh OAuth has been removed - you need to set up your own Google OAuth
+    // TODO: Configure your own Google OAuth provider
+    // See: https://developers.google.com/identity/protocols/oauth2
     alert('Google OAuth not configured. Please use email/password login or configure your own OAuth provider.');
-    // Example: window.location.href = `https://your-oauth-provider.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+    // Example: window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?client_id=YOUR_CLIENT_ID&redirect_uri=${encodeURIComponent(redirectUrl)}&response_type=code&scope=email%20profile`;
   };
 
   const processOAuthCallback = async (sessionId) => {
